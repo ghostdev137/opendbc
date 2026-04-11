@@ -42,7 +42,7 @@ class CarControllerParams:
 
   def __init__(self, CP):
     # ghostpilot: change this to SteeringMode.APA or SteeringMode.LKA to switch modes
-    self.STEERING_MODE = SteeringMode.STOCK
+    self.STEERING_MODE = SteeringMode.LKA
 
 
 class FordSafetyFlags(IntFlag):
