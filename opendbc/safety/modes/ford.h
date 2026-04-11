@@ -141,67 +141,11 @@ static bool ford_tx_hook(const CANPacket_t *msg) {
 }
 
 static safety_config ford_init(uint16_t param) {
-  // warning: quality flags are not yet checked in openpilot's CAN parser,
-  // this may be the cause of blocked messages
-  static RxCheck ford_rx_checks[] = {
-    {.msg = {{FORD_BrakeSysFeatures, 0, 8, 50U, .max_counter = 15U}, { 0 }, { 0 }}},
-    // FORD_EngVehicleSpThrottle2 has a counter that either randomly skips or by 2, likely ECU bug
-    // Some hybrid models also experience a bug where this checksum mismatches for one or two frames under heavy acceleration with ACC
-    // It has been confirmed that the Bronco Sport's camera only disallows ACC for bad quality flags, not counters or checksums, so we match that
-    {.msg = {{FORD_EngVehicleSpThrottle2, 0, 8, 50U, .ignore_checksum = true, .ignore_counter = true}, { 0 }, { 0 }}},
-    {.msg = {{FORD_Yaw_Data_FD1, 0, 8, 100U, .max_counter = 255U}, { 0 }, { 0 }}},
-    // These messages have no counter or checksum
-    {.msg = {{FORD_EngBrakeData, 0, 8, 10U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true}, { 0 }, { 0 }}},
-    {.msg = {{FORD_EngVehicleSpThrottle, 0, 8, 100U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true}, { 0 }, { 0 }}},
-    {.msg = {{FORD_DesiredTorqBrk, 0, 8, 50U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true}, { 0 }, { 0 }}},
-  };
-
-  // ghostpilot: all relay checks disabled for passthrough
-  #define FORD_COMMON_TX_MSGS \
-    {FORD_Steering_Data_FD1, 0, 8, .check_relay = false}, \
-    {FORD_Steering_Data_FD1, 2, 8, .check_relay = false}, \
-    {FORD_ACCDATA_3, 0, 8, .check_relay = false},          \
-    {FORD_Lane_Assist_Data1, 0, 8, .check_relay = false},  \
-    {FORD_IPMA_Data, 0, 8, .check_relay = false},          \
-
-  static const CanMsg FORD_CANFD_LONG_TX_MSGS[] = {
-    FORD_COMMON_TX_MSGS
-    {FORD_ACCDATA, 0, 8, .check_relay = false},
-    {FORD_LateralMotionControl2, 0, 8, .check_relay = false},
-  };
-
-  static const CanMsg FORD_CANFD_STOCK_TX_MSGS[] = {
-    FORD_COMMON_TX_MSGS
-    {FORD_LateralMotionControl2, 0, 8, .check_relay = false},
-  };
-
-  static const CanMsg FORD_LONG_TX_MSGS[] = {
-    FORD_COMMON_TX_MSGS
-    {FORD_ACCDATA, 0, 8, .check_relay = false},
-    {FORD_LateralMotionControl, 0, 8, .check_relay = false},
-  };
-
-  const uint16_t FORD_PARAM_CANFD = 2;
-  const bool ford_canfd = GET_FLAG(param, FORD_PARAM_CANFD);
-
-  bool ford_longitudinal = false;
-
-#ifdef ALLOW_DEBUG
-  const uint16_t FORD_PARAM_LONGITUDINAL = 1;
-  ford_longitudinal = GET_FLAG(param, FORD_PARAM_LONGITUDINAL);
-#endif
-
-  // Longitudinal is the default for CAN, and optional for CAN FD w/ ALLOW_DEBUG
-  ford_longitudinal = !ford_canfd || ford_longitudinal;
-
-  safety_config ret;
-  if (ford_canfd) {
-    ret = ford_longitudinal ? BUILD_SAFETY_CFG(ford_rx_checks, FORD_CANFD_LONG_TX_MSGS) : \
-                              BUILD_SAFETY_CFG(ford_rx_checks, FORD_CANFD_STOCK_TX_MSGS);
-  } else {
-    ret = BUILD_SAFETY_CFG(ford_rx_checks, FORD_LONG_TX_MSGS);
-  }
-  return ret;
+  // ghostpilot: no checks — null TX whitelist and null RX checks
+  // Same as SAFETY_ALLOUTPUT: any message, any bus, any value
+  SAFETY_UNUSED(param);
+  controls_allowed = true;
+  return (safety_config){NULL, 0, NULL, 0, false}; // NOLINT(readability/braces)
 }
 
 const safety_hooks ford_hooks = {
