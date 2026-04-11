@@ -41,8 +41,10 @@ class CarControllerParams:
   INACTIVE_GAS = -5.0
 
   def __init__(self, CP):
-    # ghostpilot: change this to SteeringMode.APA or SteeringMode.LKA to switch modes
-    self.STEERING_MODE = SteeringMode.LKA
+    # ghostpilot: steering mode from UI toggle, persisted in Params
+    from openpilot.common.params import Params
+    mode = Params().get("GhostpilotSteeringMode", return_default=True)
+    self.STEERING_MODE = SteeringMode(int(mode))
 
 
 class FordSafetyFlags(IntFlag):
