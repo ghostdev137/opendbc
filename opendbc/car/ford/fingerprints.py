@@ -225,4 +225,11 @@ FW_VERSIONS = {
       b'RJ6T-14H102-BBB\x00\x00\x00\x00\x00\x00\x00\x00\x00',
     ],
   },
+  # ghostpilot: placeholder — capture real FW versions from vehicle
+  CAR.FORD_TRANSIT_MK5: {
+    (Ecu.eps, 0x730, None): [],
+    (Ecu.abs, 0x760, None): [],
+    (Ecu.fwdRadar, 0x764, None): [],
+    (Ecu.fwdCamera, 0x706, None): [],
+  },
 }
