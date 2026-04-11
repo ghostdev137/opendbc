@@ -340,3 +340,63 @@ def create_button_msg(packer, bus: int, stock_values: dict, cancel=False, resume
     "TjaButtnOnOffPress": 1 if tja_toggle else 0,   # LCA/TJA toggle button
   })
   return packer.make_can_msg("Steering_Data_FD1", bus, values)
+
+
+def create_apa_steer_msg(packer, CAN: CanBus, sapp_config: int, angle_req: bool,
+                         steering_angle: float):
+  """
+  Creates ParkAid_Data (0x3A8) for SAPP angle control.
+
+  The SAPP handshake protocol uses SAPPStatusCoding to negotiate with the PSCM:
+    70 -> 86 -> (angle_req=1) -> 224 -> 16
+
+  Once handshaked (SAPPAngleControlStat1 == 2), the PSCM accepts direct
+  steering angle commands via ExtSteeringAngleReq2.
+
+  Frequency is 50Hz.
+  """
+  values = {
+    "ApaSys_D_Stat": 2 if angle_req else 0,  # 0=Null, 2=On
+    "SAPPStatusCoding": sapp_config,
+    "EPASExtAngleStatReq": 1 if angle_req else 0,
+    "ExtSteeringAngleReq2": steering_angle,
+  }
+  return packer.make_can_msg("ParkAid_Data", CAN.main, values)
+
+
+def create_lka_steer_msg(packer, CAN: CanBus, steering_angle_deg: float, active: bool):
+  """
+  Creates Lane_Assist_Data1 (0x3CA) with steering angle data for LKA mode.
+
+  Sends incremental angle corrections through the LKA channel.
+  Angle is clipped to +/-5.8 degrees and converted to milliradians.
+
+  Frequency is 33Hz.
+  """
+  MAX_LKA_ANGLE = 5.8  # degrees
+
+  if active:
+    angle_clipped = max(-MAX_LKA_ANGLE, min(MAX_LKA_ANGLE, steering_angle_deg))
+    angle_mrad = angle_clipped * 17.4533  # deg to mrad
+
+    # NOTE: direction values (2=left, 4=right) need on-vehicle confirmation
+    if angle_clipped > 0:
+      direction = 4  # right
+    elif angle_clipped < 0:
+      direction = 2  # left
+    else:
+      direction = 0
+
+    ramp = 1 if abs(angle_clipped) >= 5.0 else 0
+  else:
+    angle_mrad = 0
+    direction = 0
+    ramp = 0
+
+  values = {
+    "LkaActvStats_D2_Req": direction,
+    "LaRefAng_No_Req": angle_mrad,
+    "LaRampType_B_Req": ramp,
+    "LdwActvIntns_D_Req": 3 if active else 0,
+  }
+  return packer.make_can_msg("Lane_Assist_Data1", CAN.main, values)
