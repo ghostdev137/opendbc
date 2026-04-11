@@ -188,7 +188,7 @@ class CAR(Platforms):
   )
   FORD_TRANSIT_MK5 = FordPlatformConfig(
     [FordCarDocs("Ford Transit 2025", "Co-Pilot360 Assist+")],
-    CarSpecs(mass=2500, wheelbase=3.30, steerRatio=17.5),
+    CarSpecs(mass=2068, wheelbase=3.302, steerRatio=16.7),
   )
 
 
