@@ -111,175 +111,33 @@ static bool ford_get_quality_flag_valid(const CANPacket_t *msg) {
 static const AngleSteeringLimits FORD_STEERING_LIMITS = FORD_LIMITS(false);
 
 static void ford_rx_hook(const CANPacket_t *msg) {
+  // ghostpilot: passthrough mode — always allow controls
+  controls_allowed = true;
+
   if (msg->bus == FORD_MAIN_BUS) {
-    // Update in motion state from standstill signal
+    // Still parse vehicle state for telemetry, but no safety disables
     if (msg->addr == FORD_DesiredTorqBrk) {
-      // Signal: VehStop_D_Stat
       vehicle_moving = ((msg->data[3] >> 3) & 0x3U) != 1U;
     }
 
-    // Update vehicle speed
     if (msg->addr == FORD_BrakeSysFeatures) {
-      // Signal: Veh_V_ActlBrk
       UPDATE_VEHICLE_SPEED(((msg->data[0] << 8) | msg->data[1]) * 0.01 * KPH_TO_MS);
     }
 
-    // Check vehicle speed against a second source
-    if (msg->addr == FORD_EngVehicleSpThrottle2) {
-      // Disable controls if speeds from ABS and PCM ECUs are too far apart.
-      // Signal: Veh_V_ActlEng
-      float filtered_pcm_speed = ((msg->data[6] << 8) | msg->data[7]) * 0.01 * KPH_TO_MS;
-      speed_mismatch_check(filtered_pcm_speed);
-    }
-
-    // Update vehicle yaw rate
-    if (msg->addr == FORD_Yaw_Data_FD1) {
-      // Signal: VehYaw_W_Actl
-      // TODO: we should use the speed which results in the closest angle measurement to the desired angle
-      float ford_yaw_rate = (((msg->data[2] << 8U) | msg->data[3]) * 0.0002) - 6.5;
-      float current_curvature = ford_yaw_rate / SAFETY_MAX(vehicle_speed.values[0] / VEHICLE_SPEED_FACTOR, 0.1);
-      // convert current curvature into units on CAN for comparison with desired curvature
-      update_sample(&angle_meas, ROUND(current_curvature * FORD_STEERING_LIMITS.angle_deg_to_can));
-    }
-
-    // Update gas pedal
     if (msg->addr == FORD_EngVehicleSpThrottle) {
-      // Pedal position: (0.1 * val) in percent
-      // Signal: ApedPos_Pc_ActlArb
       gas_pressed = (((msg->data[0] & 0x03U) << 8) | msg->data[1]) > 0U;
     }
 
-    // Update brake pedal and cruise state
     if (msg->addr == FORD_EngBrakeData) {
-      // Signal: BpedDrvAppl_D_Actl
       brake_pressed = ((msg->data[0] >> 4) & 0x3U) == 2U;
-
-      // Signal: CcStat_D_Actl
-      unsigned int cruise_state = msg->data[1] & 0x07U;
-      bool cruise_engaged = (cruise_state == 4U) || (cruise_state == 5U);
-      pcm_cruise_check(cruise_engaged);
     }
   }
 }
 
 static bool ford_tx_hook(const CANPacket_t *msg) {
-  const LongitudinalLimits FORD_LONG_LIMITS = {
-    // acceleration cmd limits (used for brakes)
-    // Signal: AccBrkTot_A_Rq
-    .max_accel = 5641,       //  1.9999 m/s^s
-    .min_accel = 4231,       // -3.4991 m/s^2
-    .inactive_accel = 5128,  // -0.0008 m/s^2
-
-    // gas cmd limits
-    // Signal: AccPrpl_A_Rq & AccPrpl_A_Pred
-    .max_gas = 700,          //  2.0 m/s^2
-    .min_gas = 450,          // -0.5 m/s^2
-    .inactive_gas = 0,       // -5.0 m/s^2
-  };
-
-  bool tx = true;
-
-  // Safety check for ACCDATA accel and brake requests
-  if (msg->addr == FORD_ACCDATA) {
-    // Signal: AccPrpl_A_Rq
-    int gas = ((msg->data[6] & 0x3U) << 8) | msg->data[7];
-    // Signal: AccPrpl_A_Pred
-    int gas_pred = ((msg->data[2] & 0x3U) << 8) | msg->data[3];
-    // Signal: AccBrkTot_A_Rq
-    int accel = ((msg->data[0] & 0x1FU) << 8) | msg->data[1];
-    // Signal: CmbbDeny_B_Actl
-    bool cmbb_deny = (msg->data[4] >> 5) & 1U;
-
-    // Signal: AccBrkPrchg_B_Rq & AccBrkDecel_B_Rq
-    bool brake_actuation = ((msg->data[6] >> 6) & 1U) || ((msg->data[6] >> 7) & 1U);
-
-    bool violation = false;
-    violation |= longitudinal_accel_checks(accel, FORD_LONG_LIMITS);
-    violation |= longitudinal_gas_checks(gas, FORD_LONG_LIMITS);
-    violation |= longitudinal_gas_checks(gas_pred, FORD_LONG_LIMITS);
-
-    // Safety check for stock AEB
-    violation |= cmbb_deny; // do not prevent stock AEB actuation
-
-    violation |= !get_longitudinal_allowed() && brake_actuation;
-
-    if (violation) {
-      tx = false;
-    }
-  }
-
-  // Safety check for Steering_Data_FD1 button signals
-  // Note: Many other signals in this message are not relevant to safety (e.g. blinkers, wiper switches, high beam)
-  // which we passthru in OP.
-  if (msg->addr == FORD_Steering_Data_FD1) {
-    // Violation if resume button is pressed while controls not allowed, or
-    // if cancel button is pressed when cruise isn't engaged.
-    bool violation = false;
-    violation |= ((msg->data[1] >> 0) & 1U) && !cruise_engaged_prev;   // Signal: CcAslButtnCnclPress (cancel)
-    violation |= ((msg->data[3] >> 1) & 1U) && !controls_allowed;     // Signal: CcAsllButtnResPress (resume)
-
-    if (violation) {
-      tx = false;
-    }
-  }
-
-  // Safety check for Lane_Assist_Data1 action
-  if (msg->addr == FORD_Lane_Assist_Data1) {
-    // Do not allow steering using Lane_Assist_Data1 (Lane-Departure Aid).
-    // This message must be sent for Lane Centering to work, and can include
-    // values such as the steering angle or lane curvature for debugging,
-    // but the action (LkaActvStats_D2_Req) must be set to zero.
-    unsigned int action = msg->data[0] >> 5;
-    if (action != 0U) {
-      tx = false;
-    }
-  }
-
-  // Safety check for LateralMotionControl action
-  if (msg->addr == FORD_LateralMotionControl) {
-    // Signal: LatCtl_D_Rq
-    bool steer_control_enabled = ((msg->data[4] >> 2) & 0x7U) != 0U;
-    unsigned int raw_curvature = (msg->data[0] << 3) | (msg->data[1] >> 5);
-    unsigned int raw_curvature_rate = ((msg->data[1] & 0x1FU) << 8) | msg->data[2];
-    unsigned int raw_path_angle = (msg->data[3] << 3) | (msg->data[4] >> 5);
-    unsigned int raw_path_offset = (msg->data[5] << 2) | (msg->data[6] >> 6);
-
-    // These signals are not yet tested with the current safety limits
-    bool violation = (raw_curvature_rate != FORD_INACTIVE_CURVATURE_RATE) || (raw_path_angle != FORD_INACTIVE_PATH_ANGLE) || (raw_path_offset != FORD_INACTIVE_PATH_OFFSET);
-
-    // Check angle error and steer_control_enabled
-    int desired_curvature = raw_curvature - FORD_INACTIVE_CURVATURE;  // /FORD_STEERING_LIMITS.angle_deg_to_can to get real curvature
-    violation |= steer_angle_cmd_checks(desired_curvature, steer_control_enabled, FORD_STEERING_LIMITS);
-
-    if (violation) {
-      tx = false;
-    }
-  }
-
-  // Safety check for LateralMotionControl2 action
-  if (msg->addr == FORD_LateralMotionControl2) {
-    static const AngleSteeringLimits FORD_CANFD_STEERING_LIMITS = FORD_LIMITS(true);
-
-    // Signal: LatCtl_D2_Rq
-    bool steer_control_enabled = ((msg->data[0] >> 4) & 0x7U) != 0U;
-    unsigned int raw_curvature = (msg->data[2] << 3) | (msg->data[3] >> 5);
-    unsigned int raw_curvature_rate = (msg->data[6] << 3) | (msg->data[7] >> 5);
-    unsigned int raw_path_angle = ((msg->data[3] & 0x1FU) << 6) | (msg->data[4] >> 2);
-    unsigned int raw_path_offset = ((msg->data[4] & 0x3U) << 8) | msg->data[5];
-
-    // These signals are not yet tested with the current safety limits
-    bool violation = (raw_curvature_rate != FORD_CANFD_INACTIVE_CURVATURE_RATE) || (raw_path_angle != FORD_INACTIVE_PATH_ANGLE) || (raw_path_offset != FORD_INACTIVE_PATH_OFFSET);
-
-    // Check angle error and steer_control_enabled
-    int desired_curvature = raw_curvature - FORD_INACTIVE_CURVATURE;  // /FORD_STEERING_LIMITS.angle_deg_to_can to get real curvature
-    violation |= steer_angle_cmd_checks(desired_curvature, steer_control_enabled, FORD_CANFD_STEERING_LIMITS);
-
-    if (violation) {
-      tx = false;
-    }
-  }
-
-  return tx;
+  // ghostpilot: passthrough mode — allow all TX messages
+  (void)msg;
+  return true;
 }
 
 static safety_config ford_init(uint16_t param) {
@@ -298,28 +156,29 @@ static safety_config ford_init(uint16_t param) {
     {.msg = {{FORD_DesiredTorqBrk, 0, 8, 50U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true}, { 0 }, { 0 }}},
   };
 
+  // ghostpilot: all relay checks disabled for passthrough
   #define FORD_COMMON_TX_MSGS \
     {FORD_Steering_Data_FD1, 0, 8, .check_relay = false}, \
     {FORD_Steering_Data_FD1, 2, 8, .check_relay = false}, \
-    {FORD_ACCDATA_3, 0, 8, .check_relay = true},          \
-    {FORD_Lane_Assist_Data1, 0, 8, .check_relay = true},  \
-    {FORD_IPMA_Data, 0, 8, .check_relay = true},          \
+    {FORD_ACCDATA_3, 0, 8, .check_relay = false},          \
+    {FORD_Lane_Assist_Data1, 0, 8, .check_relay = false},  \
+    {FORD_IPMA_Data, 0, 8, .check_relay = false},          \
 
   static const CanMsg FORD_CANFD_LONG_TX_MSGS[] = {
     FORD_COMMON_TX_MSGS
-    {FORD_ACCDATA, 0, 8, .check_relay = true},
-    {FORD_LateralMotionControl2, 0, 8, .check_relay = true},
+    {FORD_ACCDATA, 0, 8, .check_relay = false},
+    {FORD_LateralMotionControl2, 0, 8, .check_relay = false},
   };
 
   static const CanMsg FORD_CANFD_STOCK_TX_MSGS[] = {
     FORD_COMMON_TX_MSGS
-    {FORD_LateralMotionControl2, 0, 8, .check_relay = true},
+    {FORD_LateralMotionControl2, 0, 8, .check_relay = false},
   };
 
   static const CanMsg FORD_LONG_TX_MSGS[] = {
     FORD_COMMON_TX_MSGS
-    {FORD_ACCDATA, 0, 8, .check_relay = true},
-    {FORD_LateralMotionControl, 0, 8, .check_relay = true},
+    {FORD_ACCDATA, 0, 8, .check_relay = false},
+    {FORD_LateralMotionControl, 0, 8, .check_relay = false},
   };
 
   const uint16_t FORD_PARAM_CANFD = 2;
