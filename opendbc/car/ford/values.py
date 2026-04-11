@@ -1,7 +1,7 @@
 import copy
 import re
 from dataclasses import dataclass, field, replace
-from enum import Enum, IntFlag
+from enum import Enum, IntEnum, IntFlag
 
 from opendbc.car import Bus, CarSpecs, DbcDict, PlatformConfig, Platforms, uds
 from opendbc.car.lateral import AngleSteeringLimits
@@ -15,6 +15,7 @@ Ecu = CarParams.Ecu
 class CarControllerParams:
   STEER_STEP = 5        # LateralMotionControl, 20Hz
   LKA_STEP = 3          # Lane_Assist_Data1, 33Hz
+  APA_STEP = 2          # ParkAid_Data, 50Hz
   ACC_CONTROL_STEP = 2  # ACCDATA, 50Hz
   LKAS_UI_STEP = 100    # IPMA_Data, 1Hz
   ACC_UI_STEP = 20      # ACCDATA_3, 5Hz
@@ -40,7 +41,8 @@ class CarControllerParams:
   INACTIVE_GAS = -5.0
 
   def __init__(self, CP):
-    pass
+    # ghostpilot: change this to SteeringMode.APA or SteeringMode.LKA to switch modes
+    self.STEERING_MODE = SteeringMode.STOCK
 
 
 class FordSafetyFlags(IntFlag):
@@ -51,6 +53,12 @@ class FordSafetyFlags(IntFlag):
 class FordFlags(IntFlag):
   # Static flags
   CANFD = 1
+
+
+class SteeringMode(IntEnum):
+  STOCK = 0   # TJA/LCA curvature-based (default)
+  APA = 1     # SAPP angle control via ParkAid_Data
+  LKA = 2     # Incremental angle via Lane_Assist_Data1
 
 
 class RADAR:
