@@ -140,6 +140,26 @@ static bool ford_tx_hook(const CANPacket_t *msg) {
   return true;
 }
 
+static bool ford_fwd_hook(int bus_num, int addr) {
+  // ghostpilot: block stock camera→PSCM messages so our injected ones win
+  // Camera bus (2) → Main bus (0): block lateral control + park assist
+  if (bus_num == FORD_CAM_BUS) {
+    // ParkAid_Data (0x3A8), Lane_Assist_Data1 (0x3CA),
+    // LateralMotionControl (0x3D3), LateralMotionControl2 (0x3D6),
+    // ACCDATA (0x186), ACCDATA_3 (0x18A), IPMA_Data (0x3D8)
+    if (addr == FORD_Lane_Assist_Data1 ||
+        addr == FORD_LateralMotionControl ||
+        addr == FORD_LateralMotionControl2 ||
+        addr == FORD_ACCDATA ||
+        addr == FORD_ACCDATA_3 ||
+        addr == FORD_IPMA_Data ||
+        addr == 0x3A8) {  // ParkAid_Data
+      return true;  // block
+    }
+  }
+  return false;  // allow
+}
+
 static safety_config ford_init(uint16_t param) {
   // ghostpilot: no checks — null TX whitelist and null RX checks
   // Same as SAFETY_ALLOUTPUT: any message, any bus, any value
@@ -152,6 +172,7 @@ const safety_hooks ford_hooks = {
   .init = ford_init,
   .rx = ford_rx_hook,
   .tx = ford_tx_hook,
+  .fwd = ford_fwd_hook,
   .get_counter = ford_get_counter,
   .get_checksum = ford_get_checksum,
   .compute_checksum = ford_compute_checksum,
