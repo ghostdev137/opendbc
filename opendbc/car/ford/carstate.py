@@ -20,6 +20,7 @@ class CarState(CarStateBase):
     self.distance_button = 0
     self.lc_button = 0
     self.sapp_state = 0  # SAPPAngleControlStat1: 0=Closed, 1=Open, 2=Active, 3=Fault
+    self.lateral_motion_control_stock = None
 
   def update(self, can_parsers) -> structs.CarState:
     cp = can_parsers[Bus.pt]
@@ -110,6 +111,12 @@ class CarState(CarStateBase):
     # Stock values from IPMA so that we can retain some stock functionality
     self.acc_tja_status_stock_values = cp_cam.vl["ACCDATA_3"]
     self.lkas_status_stock_values = cp_cam.vl["IPMA_Data"]
+    # ghostpilot: capture stock LateralMotionControl so we can passthru path data to PSCM
+    # Prevents camera fault when we disable LatCtl_D_Rq while still forwarding camera path values
+    try:
+      self.lateral_motion_control_stock = cp_cam.vl["LateralMotionControl"]
+    except KeyError:
+      self.lateral_motion_control_stock = None
 
     ret.buttonEvents = [
       *create_button_events(self.distance_button, prev_distance_button, {1: ButtonType.gapAdjustCruise}),

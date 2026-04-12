@@ -400,3 +400,32 @@ def create_lka_steer_msg(packer, CAN: CanBus, steering_angle_deg: float, active:
     "LdwActvIntns_D_Req": 3 if active else 0,
   }
   return packer.make_can_msg("Lane_Assist_Data1", CAN.main, values)
+
+
+def create_lat_ctl_passthru_msg(packer, CAN: CanBus, stock_values):
+  """
+  Replay camera's LateralMotionControl on main bus with LatCtl_D_Rq disabled.
+
+  This keeps the PSCM's camera-handshake chain alive (path data, counter, ramp)
+  while disabling the stock TJA/LCA activation. Required in LKA/APA modes to
+  prevent the IPMA camera from faulting when its original LateralMotionControl
+  is blocked by the fwd_hook.
+
+  Frequency is 20Hz.
+  """
+  if stock_values is None:
+    # Fallback: send neutral zeros (camera will likely fault)
+    values = {"LatCtl_D_Rq": 0}
+  else:
+    values = {k: stock_values[k] for k in [
+      "LatCtlRng_L_Max",
+      "HandsOffCnfm_B_Rq",
+      "LatCtlRampType_D_Rq",
+      "LatCtlPrecision_D_Rq",
+      "LatCtlPathOffst_L_Actl",
+      "LatCtlPath_An_Actl",
+      "LatCtlCurv_NoRate_Actl",
+      "LatCtlCurv_No_Actl",
+    ]}
+    values["LatCtl_D_Rq"] = 0  # always disabled in passthrough
+  return packer.make_can_msg("LateralMotionControl", CAN.main, values)

@@ -224,13 +224,14 @@ class CarController(CarControllerBase):
       if (self.frame % CarControllerParams.LKA_STEP) == 0:
         can_sends.append(fordcan.create_lka_msg(self.packer, self.CAN))
 
-      # Send inactive lateral motion control to prevent IPMA/PSCM faults
+      # ghostpilot: passthrough camera's LateralMotionControl with activation disabled
       if (self.frame % CarControllerParams.STEER_STEP) == 0:
         if self.CP.flags & FordFlags.CANFD:
           counter = (self.frame // CarControllerParams.STEER_STEP) % 0x10
           can_sends.append(fordcan.create_lat_ctl2_msg(self.packer, self.CAN, 0, 0., 0., 0., 0., counter))
         else:
-          can_sends.append(fordcan.create_lat_ctl_msg(self.packer, self.CAN, False, 0., 0., 0., 0.))
+          can_sends.append(fordcan.create_lat_ctl_passthru_msg(
+            self.packer, self.CAN, CS.lateral_motion_control_stock))
 
     elif self.params.STEERING_MODE == SteeringMode.LKA:
       # LKA: incremental angle via Lane_Assist_Data1 at 33Hz
@@ -245,13 +246,15 @@ class CarController(CarControllerBase):
         can_sends.append(fordcan.create_lka_steer_msg(
           self.packer, self.CAN, relative_angle, CC.latActive))
 
-      # Send inactive lateral motion control to keep CAN happy
+      # ghostpilot: passthrough camera's LateralMotionControl with activation disabled
+      # Keeps PSCM↔camera heartbeat intact so camera doesn't fault
       if (self.frame % CarControllerParams.STEER_STEP) == 0:
         if self.CP.flags & FordFlags.CANFD:
           counter = (self.frame // CarControllerParams.STEER_STEP) % 0x10
           can_sends.append(fordcan.create_lat_ctl2_msg(self.packer, self.CAN, 0, 0., 0., 0., 0., counter))
         else:
-          can_sends.append(fordcan.create_lat_ctl_msg(self.packer, self.CAN, False, 0., 0., 0., 0.))
+          can_sends.append(fordcan.create_lat_ctl_passthru_msg(
+            self.packer, self.CAN, CS.lateral_motion_control_stock))
 
     ### longitudinal control ###
     # send acc msg at 50Hz
