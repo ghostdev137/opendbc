@@ -39,6 +39,14 @@ class CarControllerParams:
   MIN_GAS = -0.5
   INACTIVE_GAS = -5.0
 
+  # APA (Transit MK5) — values from phoenixpilot 0.8.0
+  APA_ANGLE_MAX_BP = [0., 11., 36.]
+  APA_ANGLE_MAX_V = [410., 25., 15.]
+  APA_ANGLE_DELTA_BP = [0., 5., 15.]
+  APA_ANGLE_DELTA_V = [5., .8, .15]     # windup
+  APA_ANGLE_DELTA_VU = [5., 3.5, 0.4]   # unwind
+  APA_STEER_STEP = 2                     # 50Hz
+
   def __init__(self, CP):
     pass
 
@@ -51,6 +59,7 @@ class FordSafetyFlags(IntFlag):
 class FordFlags(IntFlag):
   # Static flags
   CANFD = 1
+  APA = 2  # Active Park Assist: angle-based steering via ParkAid_Data
 
 
 class RADAR:
@@ -184,6 +193,7 @@ class CAR(Platforms):
   FORD_TRANSIT_MK5 = FordPlatformConfig(
     [FordCarDocs("Ford Transit 2025", "Co-Pilot360 Assist+")],
     CarSpecs(mass=2068, wheelbase=3.302, steerRatio=16.7),
+    flags=FordFlags.APA,
   )
 
 
