@@ -75,6 +75,107 @@ class CarController(CarControllerBase):
     self.lead_distance_bars_last = None
     self.distance_bar_frame = 0
 
+    # APA state (Transit MK5) — mirrors phoenixpilot 0.8.0 handshake
+    self.apa_last_angle = 0.0
+    self.apa_counter = 0
+    self.apa_eightysix = 0
+    self.apa_sapp_config = 0
+    self.apa_sapp_config_last = 0
+    self.apa_angle_req = 0
+    self.apa_angle_req_last = 0
+    self.apa_sapp_action = 0
+
+  def apa_update(self, CC, CS, can_sends):
+    """
+    Active Park Assist control for Transit MK5.
+
+    Sends ParkAid_Data at 50Hz with a PSCM handshake state machine:
+      CS.apa_handshake: 0=Closed, 1=Open, 2=Active, 3=Fault
+      SAPPStatusCoding cycle: 0 -> 70 -> 86 -> 224 -> 16 (steady state)
+
+    Rate-limits desired angle per phoenixpilot windup/unwind tables.
+    """
+    enabled = CC.latActive
+    apply_angle = CC.actuators.steeringAngleDeg
+
+    # Only run at STEER_STEP cadence (50Hz if APA_STEER_STEP=2 with 100Hz controls)
+    if (self.frame % CarControllerParams.APA_STEER_STEP) != 0:
+      return
+
+    if not enabled:
+      self.apa_counter = 0
+      self.apa_eightysix = 0
+      self.apa_angle_req = 0
+      self.apa_sapp_action = 0
+    else:
+      self.apa_counter += 1
+
+      # init handshake: send config 70 until PSCM responds
+      if CS.apa_handshake == 0 and self.apa_sapp_config_last not in (16, 86, 224):
+        self.apa_sapp_config = 70
+
+      # PSCM acks (handshake=1); after 8 frames at ack, advance to config 86
+      if CS.apa_handshake == 1 and self.apa_counter > 8:
+        self.apa_sapp_config = 86
+        self.apa_eightysix += 1
+
+      # 5 more frames at 86, start requesting angle
+      if CS.apa_handshake == 1 and self.apa_counter > 13 and self.apa_sapp_config_last == 86:
+        self.apa_angle_req = 1
+
+      # 20 frames at 86: reset counters, keep angle request
+      if self.apa_sapp_config_last == 86 and self.apa_eightysix == 20:
+        self.apa_counter = 0
+        self.apa_eightysix = 0
+        self.apa_angle_req = 1
+
+      # PSCM enters Active (handshake=2): advance to config 224
+      if CS.apa_handshake == 2 and self.apa_sapp_config_last != 16:
+        self.apa_sapp_config = 224
+        self.apa_angle_req = 1
+        self.apa_sapp_action += 1
+
+      # after 3 frames at 224, move to steady config 16
+      if CS.apa_handshake == 2 and self.apa_sapp_action >= 3 and self.apa_sapp_config_last == 224:
+        self.apa_sapp_config = 16
+        self.apa_angle_req = 1
+
+      # PSCM fault: reset and retry
+      if CS.apa_handshake == 3:
+        self.apa_sapp_config = 0
+        self.apa_counter = 0
+        self.apa_angle_req = 0
+
+    self.apa_sapp_config_last = self.apa_sapp_config
+    self.apa_angle_req_last = self.apa_angle_req
+
+    # angle clip by speed
+    angle_lim = float(np.interp(CS.out.vEgo, CarControllerParams.APA_ANGLE_MAX_BP,
+                                CarControllerParams.APA_ANGLE_MAX_V))
+    apply_angle = float(np.clip(apply_angle, -angle_lim, angle_lim))
+
+    # rate limit by speed (windup vs unwind)
+    if enabled:
+      if self.apa_last_angle * apply_angle > 0. and abs(apply_angle) > abs(self.apa_last_angle):
+        rate_lim = float(np.interp(CS.out.vEgo, CarControllerParams.APA_ANGLE_DELTA_BP,
+                                   CarControllerParams.APA_ANGLE_DELTA_V))  # windup
+      else:
+        rate_lim = float(np.interp(CS.out.vEgo, CarControllerParams.APA_ANGLE_DELTA_BP,
+                                   CarControllerParams.APA_ANGLE_DELTA_VU))  # unwind
+      apply_angle = float(np.clip(apply_angle, self.apa_last_angle - rate_lim,
+                                  self.apa_last_angle + rate_lim))
+    else:
+      apply_angle = CS.out.steeringAngleDeg  # follow measured when disengaged
+
+    self.apa_last_angle = apply_angle
+
+    # ApaSys_D_Stat: phoenix sent 0 ("Null") — keep same for parity
+    sapp_action = 0
+    can_sends.append(fordcan.create_apa_command(
+      self.packer, self.CAN, apply_angle, self.apa_angle_req_last,
+      self.apa_sapp_config_last, sapp_action,
+    ))
+
   def update(self, CC, CS, now_nanos):
     can_sends = []
 
@@ -98,37 +199,40 @@ class CarController(CarControllerBase):
       can_sends.append(fordcan.create_button_msg(self.packer, self.CAN.camera, CS.buttons_stock_values, tja_toggle=True))
 
     ### lateral control ###
-    # send steer msg at 20Hz
-    if (self.frame % CarControllerParams.STEER_STEP) == 0:
-      # Bronco and some other cars consistently overshoot curv requests
-      # Apply some deadzone + smoothing convergence to avoid oscillations
-      if self.CP.carFingerprint in (CAR.FORD_BRONCO_SPORT_MK1, CAR.FORD_F_150_MK14):
-        self.anti_overshoot_curvature_last = anti_overshoot(actuators.curvature, self.anti_overshoot_curvature_last, CS.out.vEgoRaw)
-        apply_curvature = self.anti_overshoot_curvature_last
-      else:
-        apply_curvature = actuators.curvature
+    if self.CP.flags & FordFlags.APA:
+      self.apa_update(CC, CS, can_sends)
+    else:
+      # send steer msg at 20Hz
+      if (self.frame % CarControllerParams.STEER_STEP) == 0:
+        # Bronco and some other cars consistently overshoot curv requests
+        # Apply some deadzone + smoothing convergence to avoid oscillations
+        if self.CP.carFingerprint in (CAR.FORD_BRONCO_SPORT_MK1, CAR.FORD_F_150_MK14):
+          self.anti_overshoot_curvature_last = anti_overshoot(actuators.curvature, self.anti_overshoot_curvature_last, CS.out.vEgoRaw)
+          apply_curvature = self.anti_overshoot_curvature_last
+        else:
+          apply_curvature = actuators.curvature
 
-      # apply rate limits, curvature error limit, and clip to signal range
-      current_curvature = -CS.out.yawRate / max(CS.out.vEgoRaw, 0.1)
+        # apply rate limits, curvature error limit, and clip to signal range
+        current_curvature = -CS.out.yawRate / max(CS.out.vEgoRaw, 0.1)
 
-      self.apply_curvature_last = apply_ford_curvature_limits(apply_curvature, self.apply_curvature_last, current_curvature,
-                                                              CS.out.vEgoRaw, 0., CC.latActive, self.CP)
+        self.apply_curvature_last = apply_ford_curvature_limits(apply_curvature, self.apply_curvature_last, current_curvature,
+                                                                CS.out.vEgoRaw, 0., CC.latActive, self.CP)
 
-      if self.CP.flags & FordFlags.CANFD:
-        # TODO: extended mode
-        # Ford uses four individual signals to dictate how to drive to the car. Curvature alone (limited to 0.02m/s^2)
-        # can actuate the steering for a large portion of any lateral movements. However, in order to get further control on
-        # steer actuation, the other three signals are necessary. Ford controls vehicles differently than most other makes.
-        # A detailed explanation on ford control can be found here:
-        # https://www.f150gen14.com/forum/threads/introducing-bluepilot-a-ford-specific-fork-for-comma3x-openpilot.24241/#post-457706
-        mode = 1 if CC.latActive else 0
-        counter = (self.frame // CarControllerParams.STEER_STEP) % 0x10
-        can_sends.append(fordcan.create_lat_ctl2_msg(self.packer, self.CAN, mode, 0., 0., -self.apply_curvature_last, 0., counter))
-      else:
-        can_sends.append(fordcan.create_lat_ctl_msg(self.packer, self.CAN, CC.latActive, 0., 0., -self.apply_curvature_last, 0.))
+        if self.CP.flags & FordFlags.CANFD:
+          # TODO: extended mode
+          # Ford uses four individual signals to dictate how to drive to the car. Curvature alone (limited to 0.02m/s^2)
+          # can actuate the steering for a large portion of any lateral movements. However, in order to get further control on
+          # steer actuation, the other three signals are necessary. Ford controls vehicles differently than most other makes.
+          # A detailed explanation on ford control can be found here:
+          # https://www.f150gen14.com/forum/threads/introducing-bluepilot-a-ford-specific-fork-for-comma3x-openpilot.24241/#post-457706
+          mode = 1 if CC.latActive else 0
+          counter = (self.frame // CarControllerParams.STEER_STEP) % 0x10
+          can_sends.append(fordcan.create_lat_ctl2_msg(self.packer, self.CAN, mode, 0., 0., -self.apply_curvature_last, 0., counter))
+        else:
+          can_sends.append(fordcan.create_lat_ctl_msg(self.packer, self.CAN, CC.latActive, 0., 0., -self.apply_curvature_last, 0.))
 
-    # send lka msg at 33Hz
-    if (self.frame % CarControllerParams.LKA_STEP) == 0:
+    # send lka msg at 33Hz — non-APA platforms only
+    if not (self.CP.flags & FordFlags.APA) and (self.frame % CarControllerParams.LKA_STEP) == 0:
       can_sends.append(fordcan.create_lka_msg(self.packer, self.CAN))
 
     ### longitudinal control ###
@@ -195,7 +299,10 @@ class CarController(CarControllerBase):
     self.lead_distance_bars_last = hud_control.leadDistanceBars
 
     new_actuators = actuators.as_builder()
-    new_actuators.curvature = self.apply_curvature_last
+    if self.CP.flags & FordFlags.APA:
+      new_actuators.steeringAngleDeg = self.apa_last_angle
+    else:
+      new_actuators.curvature = self.apply_curvature_last
     new_actuators.accel = self.accel
     new_actuators.gas = self.gas
 
