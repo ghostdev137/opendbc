@@ -160,9 +160,14 @@ class CarController(CarControllerBase):
         direction = 0
         ramp_type = 0
 
+      # ford-lka: also populate LaCurvature_No_Calc with the commanded path curvature.
+      # Stock IPMA sends its camera-derived curvature estimate here as feed-forward; if
+      # Transit PSCM consumes it, we get smoother curve tracking. If it ignores the field
+      # (LCA is disabled on Transit), this is a harmless no-op. Zero firmware risk.
       can_sends.append(fordcan.create_lka_msg(
         self.packer, self.CAN, active=lka_active, apply_angle=apply_angle,
-        direction=direction, ramp_type=ramp_type))
+        direction=direction, ramp_type=ramp_type,
+        curvature=self.apply_curvature_last))
 
     ### longitudinal control ###
     # send acc msg at 50Hz

@@ -34,7 +34,7 @@ def calculate_lat_ctl2_checksum(mode: int, counter: int, dat: bytearray) -> int:
 
 
 def create_lka_msg(packer, CAN: CanBus, active: bool = False, apply_angle: float = 0.0,
-                   direction: int = 0, ramp_type: int = 0):
+                   direction: int = 0, ramp_type: int = 0, curvature: float = 0.0):
   """
   Creates a CAN message for the Ford LKA Command.
 
@@ -44,6 +44,10 @@ def create_lka_msg(packer, CAN: CanBus, active: bool = False, apply_angle: float
 
   direction: 0=none, 2=left, 4=right (needs on-vehicle confirmation per platform)
   ramp_type: 0=slow, 1=fast
+  curvature: desired path curvature in 1/m (feed-forward to PSCM). IPMA stock populates
+    this from its vision-derived lane model. If the PSCM consumes it (unknown on Transit
+    PSCM, which has LCA disabled), it can pre-ramp motor torque for upcoming curves,
+    reducing tracking lag. Zero-risk if PSCM ignores the field. DBC range ±0.01023 1/m.
 
   Frequency is 33Hz.
   """
@@ -53,17 +57,19 @@ def create_lka_msg(packer, CAN: CanBus, active: bool = False, apply_angle: float
     clipped = max(-MAX_ANGLE, min(MAX_ANGLE, apply_angle))
     mrad = math.radians(clipped) * 1000.0  # deg -> mrad
     mrad = max(-102.4, min(102.3, mrad))  # DBC range
+    curv = max(-0.01023, min(0.01023, curvature))  # DBC range, keep symmetric
   else:
     mrad = 0.0
     direction = 0
     ramp_type = 0
+    curv = 0.0
 
   values = {
     "LkaDrvOvrrd_D_Rq": 0,
     "LkaActvStats_D2_Req": direction if active else 0,
     "LaRefAng_No_Req": mrad,
     "LaRampType_B_Req": ramp_type,
-    "LaCurvature_No_Calc": 0,
+    "LaCurvature_No_Calc": curv,
     "LdwActvStats_D_Req": 0,
     "LdwActvIntns_D_Req": 3 if active else 0,
   }
