@@ -62,9 +62,9 @@ class CarInterface(CarInterfaceBase):
     if ret.flags & FordFlags.APA:
       ret.safetyConfigs[-1].safetyParam |= FordSafetyFlags.APA.value
 
-      # TRON (SecOC) platforms are not supported
+      # TRON (SecOC) platforms are not supported — CAN FD only
       # LateralMotionControl2, ACCDATA are 16 bytes on these platforms
-      if len(fingerprint[CAN.camera]):
+      if ret.flags & FordFlags.CANFD and len(fingerprint[CAN.camera]):
         if fingerprint[CAN.camera].get(0x3d6) != 8 or fingerprint[CAN.camera].get(0x186) != 8:
           carlog.error('dashcamOnly: SecOC is unsupported')
           ret.dashcamOnly = True
