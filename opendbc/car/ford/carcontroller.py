@@ -155,7 +155,7 @@ class CarController(CarControllerBase):
           direction = 2
         else:
           direction = 0
-        ramp_type = 1 if abs(apply_angle) >= 5.0 else 0
+        ramp_type = 1  # always fast — A/B test for low-speed authority
       else:
         direction = 0
         ramp_type = 0
