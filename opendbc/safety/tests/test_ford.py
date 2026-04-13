@@ -22,6 +22,7 @@ MSG_Lane_Assist_Data1 = 0x3CA      # TX by OP, Lane Keep Assist
 MSG_LateralMotionControl = 0x3D3   # TX by OP, Lateral Control message
 MSG_LateralMotionControl2 = 0x3D6  # TX by OP, alternate Lateral Control message
 MSG_IPMA_Data = 0x3D8              # TX by OP, IPMA and LKAS user interface
+MSG_ParkAid_Data = 0x3A8           # TX by OP on APA platforms, angle-based park assist
 
 
 def checksum(msg):
@@ -499,6 +500,115 @@ class TestFordCANFDLongitudinalSafety(TestFordLongitudinalSafetyBase):
     self.safety = libsafety_py.libsafety
     self.safety.set_safety_hooks(CarParams.SafetyModel.ford, FordSafetyFlags.LONG_CONTROL | FordSafetyFlags.CANFD)
     self.safety.init_tests()
+
+
+class TestFordAPASafety(common.CarSafetyTest):
+  """APA (Ford Transit MK5) angle-based parking-assist safety mode.
+
+  Exercises ParkAid_Data (ExtSteeringAngleReq2) TX path with:
+    * controls_allowed gating on the EPASExtAngleStatReq request bit
+    * rate limiting via FORD_APA_STEERING_LIMITS (5 deg/frame at 0 m/s)
+    * absolute angle ceiling (410 deg) via rate-chaining from 0
+
+  Does not inherit AngleSteeringSafetyTest because APA has
+  enforce_angle_error=false and inactive_angle_is_zero=false, and
+  Ford's angle_meas is curvature-derived (from yaw+speed), not a
+  direct angle message, which the common mixin assumes.
+  """
+
+  STANDSTILL_THRESHOLD = 1
+
+  TX_MSGS = [
+    [MSG_Steering_Data_FD1, 0], [MSG_Steering_Data_FD1, 2],
+    [MSG_ACCDATA_3, 0], [MSG_Lane_Assist_Data1, 0], [MSG_IPMA_Data, 0],
+    [MSG_ACCDATA, 0],
+    [MSG_ParkAid_Data, 2],
+  ]
+  RELAY_MALFUNCTION_ADDRS = {0: (MSG_ACCDATA_3, MSG_Lane_Assist_Data1, MSG_IPMA_Data, MSG_ACCDATA),
+                             2: (MSG_ParkAid_Data,)}
+  # Key is the source bus: forwarding from source to the-other-bus is blocked.
+  # ParkAid_Data TX is on bus 2, so forwarding from bus 0 -> 2 is blocked by check_relay.
+  FWD_BLACKLISTED_ADDRS = {0: [MSG_ParkAid_Data],
+                           2: [MSG_ACCDATA, MSG_ACCDATA_3, MSG_Lane_Assist_Data1, MSG_IPMA_Data]}
+
+  # APA rate limit at v_ego=0: APA_ANGLE_DELTA_V[0] = 5.0 deg/frame (windup)
+  # Safety fudges speed by -1 and adds +1 CAN unit, so allowed delta = 5.0 * 10 + 1 = 51 CAN units = 5.1 deg.
+  APA_MAX_ANGLE = 410.0  # deg, from FORD_APA_STEERING_LIMITS.max_angle
+
+  def setUp(self):
+    self.packer = CANPackerSafety("ford_lincoln_base_pt")
+    self.safety = libsafety_py.libsafety
+    self.safety.set_safety_hooks(CarParams.SafetyModel.ford, FordSafetyFlags.APA)
+    self.safety.init_tests()
+
+  # Reuse RX-side helpers from the shared base by copying the minimal set needed
+  # for common.CarSafetyTest's relay/fwd tests (they don't need speed/yaw).
+  def _user_brake_msg(self, brake: bool):
+    enable = self.safety.get_controls_allowed()
+    values = {"BpedDrvAppl_D_Actl": 2 if brake else 1, "CcStat_D_Actl": 5 if enable else 0}
+    return self.packer.make_can_msg_safety("EngBrakeData", 0, values)
+
+  def _speed_msg(self, speed: float):
+    values = {"Veh_V_ActlBrk": speed * 3.6, "VehVActlBrk_D_Qf": 3, "VehVActlBrk_No_Cnt": 0}
+    return self.packer.make_can_msg_safety("BrakeSysFeatures", 0, values, fix_checksum=checksum)
+
+  def _vehicle_moving_msg(self, speed: float):
+    values = {"VehStop_D_Stat": 1 if speed <= self.STANDSTILL_THRESHOLD else 0}
+    return self.packer.make_can_msg_safety("DesiredTorqBrk", 0, values)
+
+  def _user_gas_msg(self, gas: float):
+    return self.packer.make_can_msg_safety("EngVehicleSpThrottle", 0, {"ApedPos_Pc_ActlArb": gas})
+
+  def _pcm_status_msg(self, enable: bool):
+    brake = self.safety.get_brake_pressed_prev()
+    values = {"BpedDrvAppl_D_Actl": 2 if brake else 1, "CcStat_D_Actl": 5 if enable else 0}
+    return self.packer.make_can_msg_safety("EngBrakeData", 0, values)
+
+  def _apa_msg(self, angle: float, req: bool):
+    values = {
+      "ExtSteeringAngleReq2": angle,
+      "EPASExtAngleStatReq": 1 if req else 0,
+      "SAPPStatusCoding": 16,
+      "ApaSys_D_Stat": 0,
+      "ApaChime_D_Rq": 0,
+    }
+    return self.packer.make_can_msg_safety("ParkAid_Data", 2, values)
+
+  def test_apa_tx_blocked_when_controls_not_allowed(self):
+    self.safety.set_controls_allowed(False)
+    # Inactive (req=0) with angle 0 is allowed
+    self.assertTrue(self._tx(self._apa_msg(0.0, False)))
+    # Any active command blocked
+    self.assertFalse(self._tx(self._apa_msg(0.0, True)))
+    self.assertFalse(self._tx(self._apa_msg(50.0, True)))
+
+  def test_apa_tx_allowed_when_controls_allowed(self):
+    self.safety.set_controls_allowed(True)
+    self.assertTrue(self._tx(self._apa_msg(0.0, True)))
+
+  def test_apa_angle_limit(self):
+    # At v=0 the rate limit is 5 deg/frame, so a single 500 deg jump from 0
+    # is blocked by the rate limiter (which also keeps angles bounded below max_angle).
+    self.safety.set_controls_allowed(True)
+    self._set_prev_desired_angle(0.0)
+    self.assertFalse(self._tx(self._apa_msg(500.0, True)))
+    # Sanity: a modest angle within one-frame rate limit is allowed
+    self._set_prev_desired_angle(0.0)
+    self.assertTrue(self._tx(self._apa_msg(5.0, True)))
+
+  def test_apa_rate_limit(self):
+    # APA_ANGLE_DELTA_V at v=0 is 5 deg/frame (windup). Safety grants +1 CAN unit slack,
+    # so 5.1 deg from 0 is on the edge, 20 deg is well over.
+    self.safety.set_controls_allowed(True)
+    self._set_prev_desired_angle(0.0)
+    self.assertTrue(self._tx(self._apa_msg(5.0, True)))
+    # Reset previous and try a large step
+    self._set_prev_desired_angle(0.0)
+    self.assertFalse(self._tx(self._apa_msg(25.0, True)))
+
+  def _set_prev_desired_angle(self, angle_deg: float):
+    # FORD_APA_STEERING_LIMITS.angle_deg_to_can == 10
+    self.safety.set_desired_angle_last(round(angle_deg * 10))
 
 
 if __name__ == "__main__":
