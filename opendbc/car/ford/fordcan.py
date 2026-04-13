@@ -340,3 +340,30 @@ def create_button_msg(packer, bus: int, stock_values: dict, cancel=False, resume
     "TjaButtnOnOffPress": 1 if tja_toggle else 0,   # LCA/TJA toggle button
   })
   return packer.make_can_msg("Steering_Data_FD1", bus, values)
+
+
+def create_apa_command(packer, CAN: CanBus, apply_angle: float, angle_req: bool,
+                       sapp_config: int, sapp_action: int, sapp_chime: int = 0):
+  """
+  Creates CAN message for Ford Active Park Assist angle command.
+
+  ParkAid_Data (0x3A8) is TX'd on the camera bus at 50Hz (GenMsgCycleTime=20ms).
+  PSCM accepts this angle when SAPPAngleControlStat1 handshake completes.
+
+  Args:
+    apply_angle: desired wheel angle in degrees (rate-limited upstream)
+    angle_req: EPASExtAngleStatReq (1=Request, 0=NoRequest)
+    sapp_config: SAPPStatusCoding — handshake coding (see carcontroller state machine)
+    sapp_action: ApaSys_D_Stat — 0..7 (see DBC VAL_TABLE ApaSys_D_Stat)
+    sapp_chime: ApaChime_D_Rq — 0..7
+
+  Frequency: 50Hz. Bus: camera (2).
+  """
+  values = {
+    "ApaSys_D_Stat": sapp_action,
+    "EPASExtAngleStatReq": 1 if angle_req else 0,
+    "ExtSteeringAngleReq2": apply_angle,
+    "SAPPStatusCoding": sapp_config,
+    "ApaChime_D_Rq": sapp_chime,
+  }
+  return packer.make_can_msg("ParkAid_Data", CAN.camera, values)
