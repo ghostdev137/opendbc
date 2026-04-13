@@ -20,6 +20,11 @@ class CarState(CarStateBase):
     self.distance_button = 0
     self.lc_button = 0
 
+    # APA (Active Park Assist) state — only populated when FordFlags.APA is set
+    self.apa_handshake = 0  # SAPPAngleControlStat1: 0=Closed, 1=Open, 2=Active, 3=Fault
+    self.apa_sys_stat = 0   # ApaSys_D_Stat: 0=Null,1=Off,2=On,3=Overspeed,4=ApaCancelled,5=NotAccessible,6=Finished,7=Faulty
+    self.apa_angle_stat = 0 # EPASExtAngleStatReq: 0=NoRequest, 1=Request
+
   def update(self, can_parsers) -> structs.CarState:
     cp = can_parsers[Bus.pt]
     cp_cam = can_parsers[Bus.cam]
@@ -101,6 +106,12 @@ class CarState(CarStateBase):
       cp_bsm = cp_cam if self.CP.flags & FordFlags.CANFD else cp
       ret.leftBlindspot = cp_bsm.vl["Side_Detect_L_Stat"]["SodDetctLeft_D_Stat"] != 0
       ret.rightBlindspot = cp_bsm.vl["Side_Detect_R_Stat"]["SodDetctRight_D_Stat"] != 0
+
+    # APA (Active Park Assist) — Transit MK5 and other APA-equipped platforms
+    if self.CP.flags & FordFlags.APA:
+      self.apa_handshake = cp.vl["EPAS_INFO"]["SAPPAngleControlStat1"]
+      self.apa_sys_stat = cp.vl["ParkAid_Data"]["ApaSys_D_Stat"]
+      self.apa_angle_stat = cp.vl["ParkAid_Data"]["EPASExtAngleStatReq"]
 
     # Stock steering buttons so that we can passthru blinkers etc.
     self.buttons_stock_values = cp.vl["Steering_Data_FD1"]
