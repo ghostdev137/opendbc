@@ -16,7 +16,6 @@
 #define FORD_LateralMotionControl  0x3D3U   // TX by OP, Lateral Control message
 #define FORD_LateralMotionControl2 0x3D6U   // TX by OP, alternate Lateral Control message
 #define FORD_IPMA_Data             0x3D8U   // TX by OP, IPMA and LKAS user interface
-#define FORD_ParkAid_Data          0x3A8U   // TX by OP on APA platforms, angle-based park assist
 
 // CAN bus numbers.
 #define FORD_MAIN_BUS 0U
@@ -110,27 +109,6 @@ static bool ford_get_quality_flag_valid(const CANPacket_t *msg) {
 }
 
 static const AngleSteeringLimits FORD_STEERING_LIMITS = FORD_LIMITS(false);
-
-// APA (Ford Transit MK5): angle-based control via ExtSteeringAngleReq2
-// Signal scale: 0.1 deg/bit, offset -1000 (raw = (angle_deg + 1000) * 10)
-// Limits from phoenixpilot 0.8.0: max |angle| 410deg at 0 mph, 15deg at 36 mph
-static const AngleSteeringLimits FORD_APA_STEERING_LIMITS = {
-  .max_angle = 4100,          // 410 degrees (raw units, 0.1 deg/bit)
-  .angle_deg_to_can = 10,     // 0.1 deg/bit
-  .max_angle_error = 50,      // 5 deg tolerance
-  .angle_rate_up_lookup = {
-    {0., 5., 15.},
-    {5., 0.8, 0.15},           // phoenixpilot APA_ANGLE_DELTA_V (windup), deg/frame
-  },
-  .angle_rate_down_lookup = {
-    {0., 5., 15.},
-    {5., 3.5, 0.4},            // phoenixpilot APA_ANGLE_DELTA_VU (unwind), deg/frame
-  },
-  .angle_error_min_speed = 100.0,  // effectively disable error check (APA is parking speed)
-  .angle_is_curvature = false,
-  .enforce_angle_error = false,    // PSCM has its own checks; phoenix didn't enforce
-  .inactive_angle_is_zero = false, // APA stream continues with non-zero angle when disengaged
-};
 
 static void ford_rx_hook(const CANPacket_t *msg) {
   if (msg->bus == FORD_MAIN_BUS) {
@@ -301,25 +279,6 @@ static bool ford_tx_hook(const CANPacket_t *msg) {
     }
   }
 
-  // Safety check for ParkAid_Data (APA angle command)
-  if (msg->addr == FORD_ParkAid_Data) {
-    // DBC: SG_ ExtSteeringAngleReq2 : 22|15@0+ (0.1,-1000)   -- big-endian (Motorola), 15-bit, start bit 22 is MSB.
-    // In Motorola byte-level layout, bit 22 is byte 2 position 6 (byte 2 spans bits 23..16).
-    // Signal occupies byte 2 bits 6..0 (7 MSBs) then byte 3 bits 7..0 (8 LSBs) => 15 bits total.
-    // Verified against ford_lincoln_base_pt.dbc packer (opendbc/car/ford/fordcan.py:create_apa_command).
-    unsigned int raw_angle = (((unsigned int)(msg->data[2] & 0x7FU)) << 8) | msg->data[3];
-    int desired_angle = (int)raw_angle - 10000;  // offset -1000 at scale 0.1 => raw 10000 = 0 deg
-
-    // SG_ EPASExtAngleStatReq : 23|1@0+ -- bit 23 == MSB of byte 2.
-    bool steer_control_enabled = ((msg->data[2] >> 7) & 1U) != 0U;
-
-    bool violation = steer_angle_cmd_checks(desired_angle, steer_control_enabled,
-                                            FORD_APA_STEERING_LIMITS);
-    if (violation) {
-      tx = false;
-    }
-  }
-
   return tx;
 }
 
@@ -346,12 +305,6 @@ static safety_config ford_init(uint16_t param) {
     {FORD_Lane_Assist_Data1, 0, 8, .check_relay = true},  \
     {FORD_IPMA_Data, 0, 8, .check_relay = true},          \
 
-  static const CanMsg FORD_APA_TX_MSGS[] = {
-    FORD_COMMON_TX_MSGS
-    {FORD_ACCDATA, 0, 8, .check_relay = true},
-    {FORD_ParkAid_Data, 2, 8, .check_relay = true},  // TX on camera bus
-  };
-
   static const CanMsg FORD_CANFD_LONG_TX_MSGS[] = {
     FORD_COMMON_TX_MSGS
     {FORD_ACCDATA, 0, 8, .check_relay = true},
@@ -372,9 +325,6 @@ static safety_config ford_init(uint16_t param) {
   const uint16_t FORD_PARAM_CANFD = 2;
   const bool ford_canfd = GET_FLAG(param, FORD_PARAM_CANFD);
 
-  const uint16_t FORD_PARAM_APA = 4;
-  const bool ford_apa = GET_FLAG(param, FORD_PARAM_APA);
-
   bool ford_longitudinal = false;
 
 #ifdef ALLOW_DEBUG
@@ -389,8 +339,6 @@ static safety_config ford_init(uint16_t param) {
   if (ford_canfd) {
     ret = ford_longitudinal ? BUILD_SAFETY_CFG(ford_rx_checks, FORD_CANFD_LONG_TX_MSGS) : \
                               BUILD_SAFETY_CFG(ford_rx_checks, FORD_CANFD_STOCK_TX_MSGS);
-  } else if (ford_apa) {
-    ret = BUILD_SAFETY_CFG(ford_rx_checks, FORD_APA_TX_MSGS);
   } else {
     ret = BUILD_SAFETY_CFG(ford_rx_checks, FORD_LONG_TX_MSGS);
   }

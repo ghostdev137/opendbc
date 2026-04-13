@@ -49,6 +49,11 @@ class CarInterface(CarInterfaceBase):
     cfgs = [get_safety_config(structs.CarParams.SafetyModel.ford)]
     if CAN.main >= 4:
       cfgs.insert(0, get_safety_config(structs.CarParams.SafetyModel.noOutput))
+    if ret.flags & FordFlags.APA:
+      cfgs = [get_safety_config(structs.CarParams.SafetyModel.allOutput)]
+      if CAN.main >= 4:
+        cfgs.insert(0, get_safety_config(structs.CarParams.SafetyModel.noOutput))
+
     ret.safetyConfigs = cfgs
 
     ret.alphaLongitudinalAvailable = ret.radarUnavailable
@@ -60,8 +65,6 @@ class CarInterface(CarInterfaceBase):
       ret.safetyConfigs[-1].safetyParam |= FordSafetyFlags.CANFD.value
 
     if ret.flags & FordFlags.APA:
-      ret.safetyConfigs[-1].safetyParam |= FordSafetyFlags.APA.value
-
       # TRON (SecOC) platforms are not supported — CAN FD only
       # LateralMotionControl2, ACCDATA are 16 bytes on these platforms
       if ret.flags & FordFlags.CANFD and len(fingerprint[CAN.camera]):
