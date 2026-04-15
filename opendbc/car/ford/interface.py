@@ -49,13 +49,9 @@ class CarInterface(CarInterfaceBase):
     cfgs = [get_safety_config(structs.CarParams.SafetyModel.ford)]
     if CAN.main >= 4:
       cfgs.insert(0, get_safety_config(structs.CarParams.SafetyModel.noOutput))
-    if ret.flags & FordFlags.APA:
-      # ALLOUTPUT_PARAM_PASSTHROUGH = 1 enables bus 0<->2 bridging. Without it, our
-      # ParkAid_Data TX on the camera bus never reaches the PSCM on bus 0 and the
-      # handshake sits in Closed forever regardless of AS-built config.
-      cfgs = [get_safety_config(structs.CarParams.SafetyModel.allOutput, 1)]
-      if CAN.main >= 4:
-        cfgs.insert(0, get_safety_config(structs.CarParams.SafetyModel.noOutput))
+    # APA uses stock ford safety (allOutput's passthrough forwarding doesn't work on
+    # signed panda firmware). Safety flag tells ford.h to allow ParkAid_Data TX on the
+    # camera bus AND forward it to the PSCM bus.
 
     ret.safetyConfigs = cfgs
 
@@ -66,6 +62,9 @@ class CarInterface(CarInterfaceBase):
 
     if ret.flags & FordFlags.CANFD:
       ret.safetyConfigs[-1].safetyParam |= FordSafetyFlags.CANFD.value
+
+    if ret.flags & FordFlags.APA:
+      ret.safetyConfigs[-1].safetyParam |= FordSafetyFlags.APA.value
 
     if ret.flags & FordFlags.APA:
       # TRON (SecOC) platforms are not supported — CAN FD only

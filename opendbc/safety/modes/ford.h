@@ -16,6 +16,7 @@
 #define FORD_LateralMotionControl  0x3D3U   // TX by OP, Lateral Control message
 #define FORD_LateralMotionControl2 0x3D6U   // TX by OP, alternate Lateral Control message
 #define FORD_IPMA_Data             0x3D8U   // TX by OP, IPMA and LKAS user interface
+#define FORD_ParkAid_Data          0x3A8U   // TX by OP on cam bus, APA steering angle request
 
 // CAN bus numbers.
 #define FORD_MAIN_BUS 0U
@@ -322,8 +323,21 @@ static safety_config ford_init(uint16_t param) {
     {FORD_LateralMotionControl, 0, 8, .check_relay = true},
   };
 
+  // APA: ParkAid_Data is TX'd on bus 0 (the PSCM bus, same as LKA/LCA), replacing
+  // the stock PAM origin from PSCM's perspective.
+  static const CanMsg FORD_APA_TX_MSGS[] = {
+    {FORD_Steering_Data_FD1, 0, 8, .check_relay = false},
+    {FORD_Steering_Data_FD1, 2, 8, .check_relay = false},
+    {FORD_ACCDATA_3, 0, 8, .check_relay = true},
+    {FORD_IPMA_Data, 0, 8, .check_relay = true},
+    {FORD_ACCDATA, 0, 8, .check_relay = true},
+    {FORD_ParkAid_Data, 0, 8, .check_relay = true},
+  };
+
   const uint16_t FORD_PARAM_CANFD = 2;
+  const uint16_t FORD_PARAM_APA = 4;
   const bool ford_canfd = GET_FLAG(param, FORD_PARAM_CANFD);
+  const bool ford_apa = GET_FLAG(param, FORD_PARAM_APA);
 
   bool ford_longitudinal = false;
 
@@ -336,7 +350,9 @@ static safety_config ford_init(uint16_t param) {
   ford_longitudinal = !ford_canfd || ford_longitudinal;
 
   safety_config ret;
-  if (ford_canfd) {
+  if (ford_apa) {
+    ret = BUILD_SAFETY_CFG(ford_rx_checks, FORD_APA_TX_MSGS);
+  } else if (ford_canfd) {
     ret = ford_longitudinal ? BUILD_SAFETY_CFG(ford_rx_checks, FORD_CANFD_LONG_TX_MSGS) : \
                               BUILD_SAFETY_CFG(ford_rx_checks, FORD_CANFD_STOCK_TX_MSGS);
   } else {
