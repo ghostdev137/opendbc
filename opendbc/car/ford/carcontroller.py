@@ -143,7 +143,8 @@ class CarController(CarControllerBase):
         # ford-lka sim: send LMC activated with our curvature. Clip to DBC range so
         # packer truncation can't sign-wrap. Sign negated to match the CANFD path.
         lmc_curv = -self.apply_curvature_last
-        lmc_curv = max(-0.0209, min(0.0209, lmc_curv))
+        # panda safety caps at 0.02; clip here so we don't get commands rejected
+        lmc_curv = max(-0.02, min(0.02, lmc_curv))
         can_sends.append(fordcan.create_lat_ctl_msg(
           self.packer, self.CAN, CC.latActive, 0., 0., lmc_curv, 0., stock_lmc=None))
 
