@@ -129,17 +129,23 @@ class CarController(CarControllerBase):
     self.apply_angle_last = apply_angle
 
     # send LateralMotionControl at 20Hz
-    # For LKA-capable cars, passthrough the camera's stock LateralMotionControl with activation
-    # disabled — keeps the PSCM↔camera heartbeat alive so the IPMA camera doesn't fault.
+    # CAN-FD cars: LCA path proper.
+    # Transit (CAN Q3): additionally try sending activated LMC with our curvature alongside
+    # the LKA message. If PSCM firmware has LCA configured (e.g. LCA_ENABLED.VBF patch),
+    # LatCtlCurv_No_Actl has a +-0.02094 1/m ceiling vs LKA's +-5.86 deg wheel (wire-level
+    # ~10x authority). If PSCM ignores LMC (stock), no harm - LKA still drives.
     if (self.frame % CarControllerParams.STEER_STEP) == 0:
       if self.CP.flags & FordFlags.CANFD:
         mode = 1 if CC.latActive else 0
         counter = (self.frame // CarControllerParams.STEER_STEP) % 0x10
         can_sends.append(fordcan.create_lat_ctl2_msg(self.packer, self.CAN, mode, 0., 0., -self.apply_curvature_last, 0., counter))
       else:
-        # passthrough stock LMC if captured; else fallback to zeros
+        # ford-lka sim: send LMC activated with our curvature. Clip to DBC range so
+        # packer truncation can't sign-wrap. Sign negated to match the CANFD path.
+        lmc_curv = -self.apply_curvature_last
+        lmc_curv = max(-0.0209, min(0.0209, lmc_curv))
         can_sends.append(fordcan.create_lat_ctl_msg(
-          self.packer, self.CAN, False, 0., 0., 0., 0., stock_lmc=CS.lateral_motion_control))
+          self.packer, self.CAN, CC.latActive, 0., 0., lmc_curv, 0., stock_lmc=None))
 
     # send lka msg at 33Hz (ford-lka: populated with angle command)
     if (self.frame % CarControllerParams.LKA_STEP) == 0:
