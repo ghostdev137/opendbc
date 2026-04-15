@@ -50,7 +50,10 @@ class CarInterface(CarInterfaceBase):
     if CAN.main >= 4:
       cfgs.insert(0, get_safety_config(structs.CarParams.SafetyModel.noOutput))
     if ret.flags & FordFlags.APA:
-      cfgs = [get_safety_config(structs.CarParams.SafetyModel.allOutput)]
+      # ALLOUTPUT_PARAM_PASSTHROUGH = 1 enables bus 0<->2 bridging. Without it, our
+      # ParkAid_Data TX on the camera bus never reaches the PSCM on bus 0 and the
+      # handshake sits in Closed forever regardless of AS-built config.
+      cfgs = [get_safety_config(structs.CarParams.SafetyModel.allOutput, 1)]
       if CAN.main >= 4:
         cfgs.insert(0, get_safety_config(structs.CarParams.SafetyModel.noOutput))
 
