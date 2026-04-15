@@ -323,15 +323,16 @@ static safety_config ford_init(uint16_t param) {
     {FORD_LateralMotionControl, 0, 8, .check_relay = true},
   };
 
-  // APA: ParkAid_Data is TX'd on bus 0 (the PSCM bus, same as LKA/LCA), replacing
-  // the stock PAM origin from PSCM's perspective.
+  // APA: ParkAid_Data is TX'd on bus 2 (camera bus) matching the reference
+  // ghostdev137/apa implementation. Panda bridges bus 2 -> bus 0 when relay
+  // is engaged so PSCM receives our TX.
   static const CanMsg FORD_APA_TX_MSGS[] = {
     {FORD_Steering_Data_FD1, 0, 8, .check_relay = false},
     {FORD_Steering_Data_FD1, 2, 8, .check_relay = false},
     {FORD_ACCDATA_3, 0, 8, .check_relay = true},
     {FORD_IPMA_Data, 0, 8, .check_relay = true},
     {FORD_ACCDATA, 0, 8, .check_relay = true},
-    {FORD_ParkAid_Data, 0, 8, .check_relay = true},
+    {FORD_ParkAid_Data, 2, 8, .check_relay = true},
   };
 
   const uint16_t FORD_PARAM_CANFD = 2;

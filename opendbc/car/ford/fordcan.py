@@ -366,4 +366,4 @@ def create_apa_command(packer, CAN: CanBus, apply_angle: float, angle_req: bool,
     "SAPPStatusCoding": sapp_config,
     "ApaChime_D_Rq": sapp_chime,
   }
-  return packer.make_can_msg("ParkAid_Data", CAN.main, values)
+  return packer.make_can_msg("ParkAid_Data", CAN.camera, values)
