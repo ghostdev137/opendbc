@@ -149,9 +149,10 @@ class CarController(CarControllerBase):
         # direction follows commanded delta sign (LkaActvStats_D2_Req: 2=left, 4=right).
         # Mismatched direction vs angle sign causes PSCM to reject or nudge wrong way.
         # Deadband ±0.1° keeps direction=0 when centered instead of biasing one way.
-        if apply_angle > 0.1:
+        # ford-lka sim: tighter deadband so small crosswind corrections still flip direction flag
+        if apply_angle > 0.01:
           direction = 4
-        elif apply_angle < -0.1:
+        elif apply_angle < -0.01:
           direction = 2
         else:
           direction = 0

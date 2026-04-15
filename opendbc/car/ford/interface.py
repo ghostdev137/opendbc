@@ -6,7 +6,7 @@ from opendbc.car.ford.carcontroller import CarController
 from opendbc.car.ford.carstate import CarState
 from opendbc.car.ford.fordcan import CanBus
 from opendbc.car.ford.radar_interface import RadarInterface
-from opendbc.car.ford.values import CarControllerParams, DBC, Ecu, FordFlags, RADAR, FordSafetyFlags
+from opendbc.car.ford.values import CAR, CarControllerParams, DBC, Ecu, FordFlags, RADAR, FordSafetyFlags
 from opendbc.car.interfaces import CarInterfaceBase
 
 TransmissionType = structs.CarParams.TransmissionType
@@ -33,7 +33,9 @@ class CarInterface(CarInterfaceBase):
 
     ret.radarUnavailable = Bus.radar not in DBC[candidate]
     ret.steerControlType = structs.CarParams.SteerControlType.angle
-    ret.steerActuatorDelay = 0.2
+    # ford-lka sim: Transit PSCM has internal rate/jerk limits stripped, responds ~instantly.
+    # Drop lookahead from 0.2s to 0.05s so commands aren't futured past current plant state.
+    ret.steerActuatorDelay = 0.05 if candidate == CAR.FORD_TRANSIT_MK5 else 0.2
     ret.steerLimitTimer = 1.0
     ret.steerAtStandstill = True
 
