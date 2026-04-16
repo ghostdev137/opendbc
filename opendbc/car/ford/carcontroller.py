@@ -136,13 +136,10 @@ class CarController(CarControllerBase):
         counter = (self.frame // CarControllerParams.STEER_STEP) % 0x10
         can_sends.append(fordcan.create_lat_ctl2_msg(self.packer, self.CAN, mode, 0., 0., -self.apply_curvature_last, 0., counter))
       else:
-        # ford-lka sim: send LMC activated with our curvature. Clip to DBC range so
-        # packer truncation can't sign-wrap. Sign negated to match the CANFD path.
-        lmc_curv = -self.apply_curvature_last
-        # panda safety caps at 0.02; clip here so we don't get commands rejected
-        lmc_curv = max(-0.02, min(0.02, lmc_curv))
+        # Replay stock camera LMC with LatCtl_D_Rq=0 (keeps PSCM-camera heartbeat alive).
+        # Steering is driven by LKA path (Lane_Assist_Data1), not LMC.
         can_sends.append(fordcan.create_lat_ctl_msg(
-          self.packer, self.CAN, CC.latActive, 0., 0., lmc_curv, 0., stock_lmc=None))
+          self.packer, self.CAN, CC.latActive, 0., 0., 0., 0., stock_lmc=CS.lateral_motion_control))
 
     # send lka msg at 33Hz — direction / ramp logic ported from
     # ghostdev137/lane-assist-driving. Timeout tracking removed (patched FW has no LKA timeout).

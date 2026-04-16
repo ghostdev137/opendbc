@@ -71,7 +71,7 @@ def create_lka_msg(packer, CAN: CanBus, active: bool = False, apply_angle: float
     "LaRampType_B_Req": ramp_type,
     "LaCurvature_No_Calc": curv,
     "LdwActvStats_D_Req": 0,
-    "LdwActvIntns_D_Req": 3 if active else 0,
+    "LdwActvIntns_D_Req": 3,
   }
   return packer.make_can_msg("Lane_Assist_Data1", CAN.main, values)
 
