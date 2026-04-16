@@ -1,5 +1,4 @@
 import math
-import time
 import numpy as np
 from opendbc.can import CANPacker
 from opendbc.car import ACCELERATION_DUE_TO_GRAVITY, Bus, DT_CTRL, apply_hysteresis, structs
@@ -74,9 +73,6 @@ class CarController(CarControllerBase):
     self.apply_curvature_last = 0
     self.apply_angle_last = 0
     self.anti_overshoot_curvature_last = 0
-    # ford-lka: timeout tracking for LKA
-    self.last_timeout_at = time.time()
-    self.last_timeout_duration = 1e8
     self.accel = 0.0
     self.gas = 0.0
     self.brake_request = False
@@ -148,34 +144,27 @@ class CarController(CarControllerBase):
         can_sends.append(fordcan.create_lat_ctl_msg(
           self.packer, self.CAN, CC.latActive, 0., 0., lmc_curv, 0., stock_lmc=None))
 
-    # send lka msg at 33Hz (ford-lka: populated with angle command)
+    # send lka msg at 33Hz — direction / ramp logic ported from
+    # ghostdev137/lane-assist-driving. Timeout tracking removed (patched FW has no LKA timeout).
     if (self.frame % CarControllerParams.LKA_STEP) == 0:
       lka_active = CC.latActive and CS.lkas_available
 
       if lka_active:
-        # direction follows commanded delta sign (LkaActvStats_D2_Req: 2=left, 4=right).
-        # Mismatched direction vs angle sign causes PSCM to reject or nudge wrong way.
-        # Deadband ±0.1° keeps direction=0 when centered instead of biasing one way.
-        # ford-lka sim: tighter deadband so small crosswind corrections still flip direction flag
-        if apply_angle > 0.01:
-          direction = 4
-        elif apply_angle < -0.01:
-          direction = 2
-        else:
-          direction = 0
-        ramp_type = 1  # always fast — A/B test for low-speed authority
+        # Direction follows CURRENT wheel sign, not delta sign (reference impl).
+        # LkaActvStats_D2_Req: 2=LkaStandIntervLeft, 4=LkaStandIntervRight.
+        direction = 2 if CS.out.steeringAngleDeg > 0 else 4
       else:
         direction = 0
-        ramp_type = 0
 
-      # ford-lka: also populate LaCurvature_No_Calc with the commanded path curvature.
-      # Stock IPMA sends its camera-derived curvature estimate here as feed-forward; if
-      # Transit PSCM consumes it, we get smoother curve tracking. If it ignores the field
-      # (LCA is disabled on Transit), this is a harmless no-op. Zero firmware risk.
+      # Fast ramp only when commanded delta is large (reference threshold)
+      ramp_type = 1 if abs(apply_angle) >= 5 else 0
+
+      # Feed-forward commanded curvature in LaCurvature_No_Calc. Sign negated to match
+      # PSCM convention (same as LMC path). Harmless if PSCM ignores the field.
       can_sends.append(fordcan.create_lka_msg(
         self.packer, self.CAN, active=lka_active, apply_angle=apply_angle,
         direction=direction, ramp_type=ramp_type,
-        curvature=self.apply_curvature_last))
+        curvature=-self.apply_curvature_last))
 
     ### longitudinal control ###
     # send acc msg at 50Hz
