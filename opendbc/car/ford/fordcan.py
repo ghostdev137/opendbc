@@ -33,16 +33,35 @@ def calculate_lat_ctl2_checksum(mode: int, counter: int, dat: bytearray) -> int:
   return 0xFF - (checksum & 0xFF)
 
 
-def create_lka_msg(packer, CAN: CanBus):
+def create_lka_msg(packer, CAN: CanBus, active: bool = False, apply_angle_deg: float = 0.0,
+                   direction: int = 0, ramp_type: int = 0):
   """
-  Creates an empty CAN message for the Ford LKA Command.
+  Creates a CAN message for the Ford LKA Command.
 
-  This command can apply "Lane Keeping Aid" maneuvers, which are subject to the PSCM lockout.
+  With default args, emits the historical empty payload preserved for stock-LKA platforms.
+
+  Transit MK5 uses this channel to command steering directly. `apply_angle_deg` is clipped
+  to ±5.8° (DBC range), then converted to milliradians for `LaRefAng_No_Req`. `direction`
+  is the `LkaActvStats_D2_Req` code (2=left, 4=right); `ramp_type` is `LaRampType_B_Req`.
 
   Frequency is 33Hz.
   """
+  if not active:
+    return packer.make_can_msg("Lane_Assist_Data1", CAN.main, {})
 
-  return packer.make_can_msg("Lane_Assist_Data1", CAN.main, {})
+  import math
+  clipped_deg = max(-5.8, min(5.8, apply_angle_deg))
+  mrad = max(-102.4, min(102.3, math.radians(clipped_deg) * 1000.0))
+  values = {
+    "LkaDrvOvrrd_D_Rq": 0,
+    "LkaActvStats_D2_Req": direction,
+    "LaRefAng_No_Req": mrad,
+    "LaRampType_B_Req": ramp_type,
+    "LaCurvature_No_Calc": 0,
+    "LdwActvStats_D_Req": 0,
+    "LdwActvIntns_D_Req": 0,
+  }
+  return packer.make_can_msg("Lane_Assist_Data1", CAN.main, values)
 
 
 def create_lat_ctl_msg(packer, CAN: CanBus, lat_active: bool, path_offset: float, path_angle: float, curvature: float,

@@ -21,6 +21,10 @@
 #define FORD_MAIN_BUS 0U
 #define FORD_CAM_BUS  2U
 
+// Platforms that steer via Lane_Assist_Data1 (LKA channel) rather than TJA/LCA.
+// When true, the LkaActvStats_D2_Req zero-only check in ford_tx_hook is skipped.
+static bool ford_lka_steering = false;
+
 static uint8_t ford_get_counter(const CANPacket_t *msg) {
   uint8_t cnt = 0;
   if (msg->addr == FORD_BrakeSysFeatures) {
@@ -229,11 +233,14 @@ static bool ford_tx_hook(const CANPacket_t *msg) {
   }
 
   // Safety check for Lane_Assist_Data1 action
-  if (msg->addr == FORD_Lane_Assist_Data1) {
+  if (msg->addr == FORD_Lane_Assist_Data1 && !ford_lka_steering) {
     // Do not allow steering using Lane_Assist_Data1 (Lane-Departure Aid).
     // This message must be sent for Lane Centering to work, and can include
     // values such as the steering angle or lane curvature for debugging,
     // but the action (LkaActvStats_D2_Req) must be set to zero.
+    // For platforms that steer via this channel (ford_lka_steering=true) this
+    // check is skipped; those platforms are still bound by the panda's
+    // controls_allowed gating and the LKA message rate limit (check_relay).
     unsigned int action = msg->data[0] >> 5;
     if (action != 0U) {
       tx = false;
@@ -330,6 +337,9 @@ static safety_config ford_init(uint16_t param) {
 
   const uint16_t FORD_PARAM_CANFD = 2;
   const bool ford_canfd = GET_FLAG(param, FORD_PARAM_CANFD);
+
+  const uint16_t FORD_PARAM_LKA_STEERING = 4;
+  ford_lka_steering = GET_FLAG(param, FORD_PARAM_LKA_STEERING);
 
   bool ford_longitudinal = false;
 

@@ -46,6 +46,9 @@ class CarControllerParams:
 class FordSafetyFlags(IntFlag):
   LONG_CONTROL = 1
   CANFD = 2
+  # Platforms that steer via Lane_Assist_Data1 (LKA channel) instead of the TJA/LCA
+  # LateralMotionControl path. When set, panda permits non-zero LkaActvStats_D2_Req TX.
+  LKA_STEERING = 4
 
 
 class FordFlags(IntFlag):

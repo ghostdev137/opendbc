@@ -22,6 +22,8 @@ class CarState(CarStateBase, MadsCarState):
 
     self.distance_button = 0
     self.lc_button = 0
+    # Transit LKA path: PSCM availability (Lane_Assist_Data3_FD1.LaActAvail_D_Actl == 3)
+    self.lkas_available = False
 
   def update(self, can_parsers) -> tuple[structs.CarState, structs.CarStateSP]:
     cp = can_parsers[Bus.pt]
@@ -113,6 +115,12 @@ class CarState(CarStateBase, MadsCarState):
     self.lkas_status_stock_values = cp_cam.vl["IPMA_Data"]
 
     MadsCarState.update_mads(self, ret, can_parsers)
+
+    # Transit LKA path: PSCM advertises LKA availability via Lane_Assist_Data3_FD1
+    try:
+      self.lkas_available = cp.vl["Lane_Assist_Data3_FD1"]["LaActAvail_D_Actl"] == 3
+    except KeyError:
+      self.lkas_available = False
 
     ret.buttonEvents = [
       *create_button_events(self.distance_button, prev_distance_button, {1: ButtonType.gapAdjustCruise}),

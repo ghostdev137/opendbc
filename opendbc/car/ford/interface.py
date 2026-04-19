@@ -6,7 +6,7 @@ from opendbc.car.ford.carcontroller import CarController
 from opendbc.car.ford.carstate import CarState
 from opendbc.car.ford.fordcan import CanBus
 from opendbc.car.ford.radar_interface import RadarInterface
-from opendbc.car.ford.values import CarControllerParams, DBC, Ecu, FordFlags, RADAR, FordSafetyFlags
+from opendbc.car.ford.values import CAR, CarControllerParams, DBC, Ecu, FordFlags, RADAR, FordSafetyFlags
 from opendbc.car.interfaces import CarInterfaceBase
 
 TransmissionType = structs.CarParams.TransmissionType
@@ -65,6 +65,11 @@ class CarInterface(CarInterfaceBase):
         if fingerprint[CAN.camera].get(0x3d6) != 8 or fingerprint[CAN.camera].get(0x186) != 8:
           carlog.error('dashcamOnly: SecOC is unsupported')
           ret.dashcamOnly = True
+    elif candidate == CAR.FORD_TRANSIT_MK5:
+      # Transit steers via the LKA channel (Lane_Assist_Data1), not TJA/LCA, so the
+      # PSCM's TJA/LCA API config is not required. Set the panda flag that lets
+      # non-zero LkaActvStats_D2_Req TX through the safety layer.
+      ret.safetyConfigs[-1].safetyParam |= FordSafetyFlags.LKA_STEERING.value
     else:
       # Lock out if the car does not have needed lateral and longitudinal control APIs.
       # Note that we also check CAN for adaptive cruise, but no known signal for LCA exists

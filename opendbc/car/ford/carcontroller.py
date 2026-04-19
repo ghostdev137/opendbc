@@ -129,7 +129,17 @@ class CarController(CarControllerBase):
 
     # send lka msg at 33Hz
     if (self.frame % CarControllerParams.LKA_STEP) == 0:
-      can_sends.append(fordcan.create_lka_msg(self.packer, self.CAN))
+      if self.CP.carFingerprint == CAR.FORD_TRANSIT_MK5:
+        # Transit PSCM steers via the LKA channel. Command relative angle clipped to ±5.8°.
+        lka_active = CC.latActive and CS.lkas_available
+        apply_angle = float(np.clip(actuators.steeringAngleDeg - CS.out.steeringAngleDeg, -5.8, 5.8)) if lka_active else 0.0
+        # LkaActvStats_D2_Req: 2 = LkaStandIntervLeft, 4 = LkaStandIntervRight. Sign follows current wheel.
+        direction = (2 if CS.out.steeringAngleDeg > 0 else 4) if lka_active else 0
+        # Fast ramp when commanded delta is large; slow otherwise.
+        ramp_type = 1 if (lka_active and abs(apply_angle) >= 5) else 0
+        can_sends.append(fordcan.create_lka_msg(self.packer, self.CAN, lka_active, apply_angle, direction, ramp_type))
+      else:
+        can_sends.append(fordcan.create_lka_msg(self.packer, self.CAN))
 
     ### longitudinal control ###
     # send acc msg at 50Hz
