@@ -238,11 +238,12 @@ static bool ford_tx_hook(const CANPacket_t *msg) {
     // Stock Ford: action must always be zero (the stock path commands steering via
     //   LateralMotionControl; Lane_Assist_Data1 is heartbeat-only with action=0).
     // LKA-steering platforms (ford_lka_steering=true, e.g. Transit MK5): non-zero
-    //   action is permitted ONLY while controls_allowed. Outside of engagement the
+    //   action is permitted while either controls_allowed (full openpilot engaged)
+    //   or controls_allowed_lateral (MADS-only lateral). Outside engagement the
     //   action-zero invariant still holds.
     unsigned int action = msg->data[0] >> 5;
     if (action != 0U) {
-      if (!ford_lka_steering || !controls_allowed) {
+      if (!ford_lka_steering || !(controls_allowed || controls_allowed_lateral)) {
         tx = false;
       }
     }
