@@ -162,7 +162,13 @@ static void ford_rx_hook(const CANPacket_t *msg) {
       unsigned int cruise_state = msg->data[1] & 0x07U;
       bool cruise_engaged = (cruise_state == 4U) || (cruise_state == 5U);
       pcm_cruise_check(cruise_engaged);
-      acc_main_on = (cruise_state == 3U) || cruise_engaged;
+      // Transit (and other LKA-steering platforms) zero CcStat_D_Actl at
+      // standstill even when main is on, which would flip acc_main_on to
+      // false and fire mads_exit_controls(ACC_MAIN_OFF) — dropping MADS
+      // lateral every stop. Always report acc_main_on=true for LKA-steering
+      // so the user keeps lateral through standstill glitches. Stock Ford
+      // platforms retain the original mapping.
+      acc_main_on = ford_lka_steering ? true : ((cruise_state == 3U) || cruise_engaged);
     }
 
     if (msg->addr == FORD_Steering_Data_FD1) {
