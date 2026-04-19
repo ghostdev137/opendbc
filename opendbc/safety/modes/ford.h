@@ -363,10 +363,28 @@ static safety_config ford_init(uint16_t param) {
   return ret;
 }
 
+static bool ford_fwd_hook(int bus_num, int addr) {
+  // LKA-steering platforms (Transit MK5): the stock IPMA camera transmits
+  // Lane_Assist_Data1 / LateralMotionControl on the camera bus. The default
+  // fwd path would copy these to the main bus while we are also TXing
+  // Lane_Assist_Data1 there, triggering stock_ecu_check → relay_malfunction
+  // and blocking every LKA message we send. Block the forward for these IDs
+  // on LKA-steering platforms; stock Ford behavior is unchanged.
+  if (ford_lka_steering && bus_num == FORD_CAM_BUS) {
+    if (addr == FORD_Lane_Assist_Data1 ||
+        addr == FORD_LateralMotionControl ||
+        addr == FORD_LateralMotionControl2) {
+      return true;  // blocked
+    }
+  }
+  return false;  // allow default forward
+}
+
 const safety_hooks ford_hooks = {
   .init = ford_init,
   .rx = ford_rx_hook,
   .tx = ford_tx_hook,
+  .fwd = ford_fwd_hook,
   .get_counter = ford_get_counter,
   .get_checksum = ford_get_checksum,
   .compute_checksum = ford_compute_checksum,
