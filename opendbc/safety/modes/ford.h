@@ -233,17 +233,18 @@ static bool ford_tx_hook(const CANPacket_t *msg) {
   }
 
   // Safety check for Lane_Assist_Data1 action
-  if (msg->addr == FORD_Lane_Assist_Data1 && !ford_lka_steering) {
-    // Do not allow steering using Lane_Assist_Data1 (Lane-Departure Aid).
-    // This message must be sent for Lane Centering to work, and can include
-    // values such as the steering angle or lane curvature for debugging,
-    // but the action (LkaActvStats_D2_Req) must be set to zero.
-    // For platforms that steer via this channel (ford_lka_steering=true) this
-    // check is skipped; those platforms are still bound by the panda's
-    // controls_allowed gating and the LKA message rate limit (check_relay).
+  if (msg->addr == FORD_Lane_Assist_Data1) {
+    // LkaActvStats_D2_Req is bits 7..5 of byte 0.
+    // Stock Ford: action must always be zero (the stock path commands steering via
+    //   LateralMotionControl; Lane_Assist_Data1 is heartbeat-only with action=0).
+    // LKA-steering platforms (ford_lka_steering=true, e.g. Transit MK5): non-zero
+    //   action is permitted ONLY while controls_allowed. Outside of engagement the
+    //   action-zero invariant still holds.
     unsigned int action = msg->data[0] >> 5;
     if (action != 0U) {
-      tx = false;
+      if (!ford_lka_steering || !controls_allowed) {
+        tx = false;
+      }
     }
   }
 
